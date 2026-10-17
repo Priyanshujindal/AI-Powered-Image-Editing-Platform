@@ -5,8 +5,11 @@ import streamlit as st
 from PIL import Image
 
 import ai
+import indexer
 import prompts
+import search as search_mod
 import storage
+from vectorstore import VectorStore
 
 st.set_page_config(page_title="PixelPrompt AI", page_icon="🪄", layout="wide")
 storage.init()
@@ -20,6 +23,27 @@ except Exception:
 st.session_state.setdefault("page", "library")
 st.session_state.setdefault("selected", None)
 st.session_state.setdefault("last_note", None)
+st.session_state.setdefault("q", "")
+
+
+@st.cache_resource
+def get_store() -> VectorStore:
+    return VectorStore(model=ai.EMBED_MODEL)
+
+
+store = get_store()
+
+
+def _caption(img):
+    return ai.caption_image(img, strict=True)
+
+
+def _embed(text):
+    return ai.embed(text, strict=True)
+
+
+def _embed_query(text):
+    return ai.embed(text, query=True)   # non-strict: search degrades to keywords on failure
 
 
 def go(page, image_id=None):
@@ -28,13 +52,15 @@ def go(page, image_id=None):
     st.rerun()
 
 
-def index_image(image_id: str):
-    """Caption with vision model, embed caption for search."""
-    rec = storage.get_image(image_id)
-    img = Image.open(rec["path"])
-    info = ai.caption_image(img)
-    vec = ai.embed(f"{info['caption']} Tags: {', '.join(info['tags'])}")
-    storage.set_caption(image_id, info["caption"], info["tags"], vec)
+def index_image(image_id: str, recaption: bool = True) -> bool:
+    """Caption + embed one image; the outcome is stored on the image (never raises)."""
+    return indexer.index_image(image_id, store, _caption, _embed, recaption=recaption)
+
+
+# One free pass per session: drop orphan vectors, migrate Week-2 embeddings (no API calls).
+if not st.session_state.get("synced"):
+    indexer.sync(store, _caption, _embed, call_api=False)
+    st.session_state["synced"] = True
 
 
 # ---------------- Sidebar ----------------
@@ -64,36 +90,103 @@ with st.sidebar:
                           accept_multiple_files=True)
     if up and st.button("Add to library", type="primary", use_container_width=True):
         bar = st.progress(0.0)
+        added = skipped = failed = 0
         for i, f in enumerate(up):
-            iid = storage.add_image(f.name, Image.open(f))
-            if ai.has_key():
-                try:
-                    index_image(iid)
-                except Exception as e:
-                    st.warning(f"{f.name}: captioning failed ({e})")
+            try:
+                img = Image.open(f)
+                dup = storage.find_duplicate(storage.prepare_upload(img))
+                if dup:
+                    st.warning(f"{f.name} is already in your library as '{dup['name']}': skipped.")
+                    skipped += 1
+                else:
+                    iid = storage.add_image(f.name, img)
+                    added += 1
+                    if ai.has_key() and not index_image(iid):
+                        st.warning(f"{f.name}: added, but search indexing failed. Use Rebuild index to retry.")
+            except storage.StorageError as e:
+                st.error(f"{f.name}: {e}")
+                failed += 1
+            except Exception as e:
+                st.error(f"{f.name}: unexpected error ({e})")
+                failed += 1
             bar.progress((i + 1) / len(up))
+        st.session_state["flash"] = f"Added {added}, skipped {skipped} duplicate(s), {failed} failed."
+        st.rerun()
+
+    # ---- search index health ----
+    st.divider()
+    st.markdown("**🔎 Search index**")
+    stats = storage.index_stats()
+    if stats["total"]:
+        st.progress(stats["ok"] / stats["total"], text=f"{stats['ok']}/{stats['total']} images searchable")
+        if stats["failed"] or stats["pending"]:
+            st.caption(f"{stats['failed']} failed · {stats['pending']} pending")
+    if st.button("♻️ Rebuild index", use_container_width=True, disabled=not ai.has_key(),
+                 help="Captions and embeds images that are missing from the index or failed earlier."):
+        bar = st.progress(0.0, text="Indexing...")
+        res = indexer.sync(store, _caption, _embed,
+                           progress=lambda f, n: bar.progress(f, text=f"Indexing {n}"))
+        st.session_state["flash"] = f"Index rebuilt: {res['indexed']} indexed, {res['failed']} failed."
         st.rerun()
 
 # ---------------- Library ----------------
+def _set_query(text):
+    st.session_state["q"] = text
+
+
+def _top_tags(images, n=6):
+    counts = {}
+    for im in images:
+        for t in search_mod._tags(im):
+            counts[t] = counts.get(t, 0) + 1
+    return [t for t, _ in sorted(counts.items(), key=lambda kv: -kv[1])[:n]]
+
+
 if st.session_state.page == "library":
     st.header("Photo Library")
-    query = st.text_input("🔎 Search by description", placeholder="e.g. show me photos with a beach or login screens")
-    images = storage.list_images()
-    if query and images:
+    if st.session_state.get("flash"):
+        st.success(st.session_state.pop("flash"))
+    all_images = storage.list_images()
+    query = st.text_input("🔎 Search by description", key="q",
+                          placeholder="e.g. sunset, mountain, show me the ones with a login form")
+    if not query and all_images:
+        tags = _top_tags(all_images)
+        if tags:
+            st.caption("Try:")
+            tcols = st.columns(len(tags))
+            for c, t in zip(tcols, tags):
+                c.button(t, key=f"tag_{t}", on_click=_set_query, args=(t,), use_container_width=True)
+
+    hits, mode, by_id = [], "hybrid", {}
+    images = all_images
+    if query.strip() and all_images:
         with st.spinner("Searching..."):
             try:
-                images = ai.search(query, images)
+                hits, mode = search_mod.search(query, all_images, store, _embed_query)
             except Exception as e:
                 st.error(f"Search failed: {e}")
-                images = []
-        st.caption(f"{len(images)} result(s)")
+        images = [h.image for h in hits]
+        by_id = {h.image["id"]: h for h in hits}
+        label = "semantic + keyword" if mode == "hybrid" else "keyword only (embeddings unavailable)"
+        st.caption(f"{len(hits)} of {len(all_images)} image(s) match · {label}")
+        if mode == "keyword" and ai.has_key():
+            st.warning("Semantic search is temporarily unavailable (rate limit or network). Showing keyword matches.")
+        unindexed = storage.index_stats()
+        if unindexed["failed"] or unindexed["pending"]:
+            st.info(f"{unindexed['failed'] + unindexed['pending']} image(s) are not in the search index yet. "
+                    "Use **Rebuild index** in the sidebar.")
     if not images:
-        st.info("No images yet. Upload some from the sidebar." if not query else "No matches.")
+        st.info("No images yet. Upload some from the sidebar." if not query.strip() else
+                "No matches. Try a different word, or describe the scene (e.g. 'a person at a beach').")
     cols = st.columns(4)
     for i, im in enumerate(images):
         with cols[i % 4]:
             st.image(im["thumb"], use_container_width=True)
-            st.caption(im["caption"] or im["name"])
+            if query.strip() and im["id"] in by_id:
+                h = by_id[im["id"]]
+                st.progress(min(h.score, 1.0), text=f"relevance {h.score:.0%}")
+            badge = {"failed": " ⚠️", "pending": " ⏳"}.get(im.get("index_status"), "")
+            st.caption((im["caption"] or im["name"]) + badge)
             if st.button("Open Studio", key=f"open_{im['id']}", use_container_width=True):
                 go("detail", im["id"])
 
@@ -103,15 +196,36 @@ else:
     if not rec:
         go("library")
     versions = storage.list_versions(rec["id"])
-    cur = next(v for v in versions if v["id"] == rec["current_version"])
+    cur = next((v for v in versions if v["id"] == rec["current_version"]), versions[0])
 
     head, delcol = st.columns([6, 1])
     head.header(rec["name"])
     if delcol.button("🗑 Delete"):
-        storage.delete_image(rec["id"])
+        indexer.remove_image(rec["id"], store)
         go("library")
     if rec["caption"]:
         st.caption(f"🤖 {rec['caption']}")
+        tags = search_mod._tags(rec)
+        if tags:
+            st.markdown(" ".join(f"`{t}`" for t in tags))
+    status = rec.get("index_status") or "pending"
+    if status != "ok":
+        st.warning(f"Search index status: **{status}**" + (f" ({rec['index_error']})" if rec.get("index_error") else ""))
+    ic1, ic2 = st.columns([1, 1])
+    if ic1.button("🔄 Re-caption & re-index", disabled=not ai.has_key()):
+        if index_image(rec["id"]):
+            st.session_state["last_note"] = "Caption and search index refreshed."
+        else:
+            st.session_state["last_note"] = "Indexing failed; try again in a minute."
+        st.rerun()
+    with ic2.popover("✏️ Rename"):
+        new_name = st.text_input("New name", value=rec["name"], key="rename_box")
+        if st.button("Save name"):
+            try:
+                storage.rename_image(rec["id"], new_name)
+                st.rerun()
+            except storage.StorageError as e:
+                st.error(str(e))
 
     if st.session_state.get("last_note"):
         st.info(st.session_state["last_note"])
@@ -129,13 +243,15 @@ else:
         try:
             with st.spinner("Processing edit on your photo..."):
                 out, note = ai.edit_image(src, task)
-                storage.add_version(rec["id"], out, label, cur["id"])
+                storage.add_version(rec["id"], out, label, cur["id"], note=note or "")
                 try:
                     index_image(rec["id"])
                 except Exception:
                     pass
             st.session_state["last_note"] = note
             st.rerun()
+        except storage.StorageError as e:
+            st.error(str(e))
         except Exception as e:
             msg = str(e)
             if "402" in msg or "FREE_LIMIT" in msg or "rate limit" in msg.lower():
@@ -218,8 +334,12 @@ else:
             st.image(v["thumb"], use_container_width=True)
             tag = " ✅ current" if v["id"] == cur["id"] else ""
             st.markdown(f"**v{v['version_no']}**{tag}")
-            st.caption(f"{v['created_at'].replace('T', ' ')}\n\n{v['prompt'][:90]}")
+            dims = f" · {v['width']}×{v['height']}" if v.get("width") else ""
+            st.caption(f"{v['created_at'].replace('T', ' ')}{dims}\n\n{v['prompt'][:90]}")
             if v["id"] != cur["id"] and st.button("Restore", key=f"r{v['id']}"):
-                storage.set_current(rec["id"], v["id"])
+                try:
+                    storage.set_current(rec["id"], v["id"])
+                except storage.StorageError as e:
+                    st.error(str(e))
                 st.session_state["last_note"] = None
                 st.rerun()

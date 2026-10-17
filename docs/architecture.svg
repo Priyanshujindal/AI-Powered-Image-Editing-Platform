@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 670" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+<style>.h{font-size:15px;font-weight:700;fill:#0f172a}.s{font-size:11.5px;fill:#475569}.l{font-size:11px;fill:#334155;font-style:italic}
+.lay{font-size:12px;font-weight:700;letter-spacing:1px;fill:#64748b}.e{stroke:#475569;stroke-width:1.6;fill:none;marker-end:url(#a)}
+.ed{stroke:#94a3b8;stroke-width:1.5;fill:none;stroke-dasharray:5 4;marker-end:url(#a)}.n{stroke:#475569;stroke-width:1.6;fill:none}</style></defs>
+<rect width="1000" height="670" fill="#f8fafc"/>
+<text x="500" y="30" text-anchor="middle" style="font-size:20px;font-weight:700;fill:#0f172a">PixelPrompt AI: System Architecture</text>
+<rect x="20" y="48" width="960" height="124" rx="12" fill="#eef2ff" stroke="#c7d2fe"/>
+<rect x="20" y="186" width="960" height="152" rx="12" fill="#ecfdf5" stroke="#a7f3d0"/>
+<rect x="20" y="352" width="960" height="122" rx="12" fill="#fff7ed" stroke="#fed7aa"/>
+<rect x="20" y="488" width="960" height="162" rx="12" fill="#fdf2f8" stroke="#fbcfe8"/>
+<text x="36" y="66" class="lay">PRESENTATION: STREAMLIT (app.py)</text>
+<text x="36" y="204" class="lay">APPLICATION LOGIC</text>
+<text x="36" y="370" class="lay">DATA LAYER (local; swap for S3 / Postgres / FAISS)</text>
+<text x="36" y="506" class="lay">EXTERNAL AI SERVICES (Google Gemini API)</text>
+<rect x="40" y="78" width="280" height="80" rx="8" fill="#fff" stroke="#6366f1"/>
+<text x="180.0" y="102" text-anchor="middle" class="h">Library + Search</text>
+<text x="180.0" y="122" text-anchor="middle" class="s">natural-language box, tag chips,</text>
+<text x="180.0" y="138" text-anchor="middle" class="s">relevance bars, upload with dedupe</text>
+<rect x="360" y="78" width="280" height="80" rx="8" fill="#fff" stroke="#6366f1"/>
+<text x="500.0" y="102" text-anchor="middle" class="h">Studio (detail + edit)</text>
+<text x="500.0" y="122" text-anchor="middle" class="s">presets, custom prompt, rename,</text>
+<text x="500.0" y="138" text-anchor="middle" class="s">each edit saved as a new version</text>
+<rect x="680" y="78" width="280" height="80" rx="8" fill="#fff" stroke="#6366f1"/>
+<text x="820.0" y="102" text-anchor="middle" class="h">Index health panel</text>
+<text x="820.0" y="122" text-anchor="middle" class="s">searchable N/M, failures,</text>
+<text x="820.0" y="138" text-anchor="middle" class="s">Rebuild index, Re-caption</text>
+<rect x="40" y="218" width="280" height="108" rx="8" fill="#fff" stroke="#10b981"/>
+<text x="180.0" y="242" text-anchor="middle" class="h">search.py (retrieval)</text>
+<text x="180.0" y="262" text-anchor="middle" class="s">embed query once (cached), cosine top-k</text>
+<text x="180.0" y="278" text-anchor="middle" class="s">0.75 semantic + 0.25 keyword</text>
+<text x="180.0" y="294" text-anchor="middle" class="s">relevance floor + best-margin cutoff</text>
+<text x="180.0" y="310" text-anchor="middle" class="s">keyword-only fallback if embedding fails</text>
+<rect x="360" y="218" width="280" height="108" rx="8" fill="#fff" stroke="#10b981"/>
+<text x="500.0" y="242" text-anchor="middle" class="h">ai.py (AI gateway)</text>
+<text x="500.0" y="262" text-anchor="middle" class="s">edit router: direct engine → vision planner</text>
+<text x="500.0" y="278" text-anchor="middle" class="s">→ Gemini image edit → guarded fallback</text>
+<text x="500.0" y="294" text-anchor="middle" class="s">caption + embed with retry and backoff</text>
+<text x="500.0" y="310" text-anchor="middle" class="s">the only module that calls external APIs</text>
+<rect x="680" y="218" width="280" height="108" rx="8" fill="#fff" stroke="#10b981"/>
+<text x="820.0" y="242" text-anchor="middle" class="h">indexer.py (pipeline)</text>
+<text x="820.0" y="262" text-anchor="middle" class="s">image → caption + tags → embedding</text>
+<text x="820.0" y="278" text-anchor="middle" class="s">→ vector store, status per image</text>
+<text x="820.0" y="294" text-anchor="middle" class="s">sync(): orphans, Week-2 migration,</text>
+<text x="820.0" y="310" text-anchor="middle" class="s">retry failed / placeholder captions</text>
+<rect x="40" y="392" width="280" height="66" rx="8" fill="#fff" stroke="#f97316"/>
+<text x="180.0" y="416" text-anchor="middle" class="h">vectorstore.py</text>
+<text x="180.0" y="436" text-anchor="middle" class="s">data/vectors.json: atomic writes,</text>
+<text x="180.0" y="452" text-anchor="middle" class="s">NumPy cosine, corrupt-file quarantine</text>
+<rect x="680" y="392" width="280" height="66" rx="8" fill="#fff" stroke="#f97316"/>
+<text x="820.0" y="416" text-anchor="middle" class="h">storage.py</text>
+<text x="820.0" y="436" text-anchor="middle" class="s">SQLite app.db + image files: versions,</text>
+<text x="820.0" y="452" text-anchor="middle" class="s">lineage, index_status, migrations</text>
+<rect x="40" y="528" width="200" height="96" rx="8" fill="#fff" stroke="#db2777"/>
+<text x="140.0" y="552" text-anchor="middle" class="h">Gemini Embeddings</text>
+<text x="140.0" y="572" text-anchor="middle" class="s">gemini-embedding-001</text>
+<text x="140.0" y="588" text-anchor="middle" class="s">QUERY / DOCUMENT tasks</text>
+<rect x="280" y="528" width="200" height="96" rx="8" fill="#fff" stroke="#db2777"/>
+<text x="380.0" y="552" text-anchor="middle" class="h">Gemini Vision + Text</text>
+<text x="380.0" y="572" text-anchor="middle" class="s">edit planner, captions + tags</text>
+<text x="380.0" y="588" text-anchor="middle" class="s">429 → next model in chain</text>
+<rect x="520" y="528" width="200" height="96" rx="8" fill="#fff" stroke="#db2777"/>
+<text x="620.0" y="552" text-anchor="middle" class="h">Gemini Image Edit</text>
+<text x="620.0" y="572" text-anchor="middle" class="s">content-level edits on</text>
+<text x="620.0" y="588" text-anchor="middle" class="s">the real image pixels</text>
+<rect x="760" y="528" width="200" height="96" rx="8" fill="#fff" stroke="#db2777"/>
+<text x="860.0" y="552" text-anchor="middle" class="h">Pollinations</text>
+<text x="860.0" y="572" text-anchor="middle" class="s">creative-only fallback</text>
+<text x="860.0" y="588" text-anchor="middle" class="s">never for UI / text edits</text>
+<path class="e" d="M180 158 L180 218"/><text x="188" y="192" class="l">query</text>
+<path class="e" d="M500 158 L500 218"/><text x="508" y="192" class="l">edit prompt</text>
+<path class="e" d="M820 158 L820 218"/><text x="828" y="192" class="l">upload / rebuild</text>
+<path class="ed" d="M620 158 L620 176 L730 176 L730 218"/><text x="636" y="170" class="l">re-index after edit</text>
+<path class="e" d="M320 262 L360 262"/><text x="340" y="256" text-anchor="middle" class="l">embed</text>
+<path class="e" d="M680 290 L640 290"/><text x="660" y="304" text-anchor="middle" class="l">caption</text><text x="660" y="316" text-anchor="middle" class="l">+ embed</text>
+<path class="e" d="M180 326 L180 392"/><text x="188" y="347" class="l">top-k vectors</text>
+<path class="e" d="M870 326 L870 392"/><text x="878" y="364" class="l">status, captions</text>
+<path class="e" d="M760 326 L760 344 L250 344 L250 392"/><text x="560" y="338" class="l">upsert vectors</text>
+<path class="n" d="M500 326 L500 506"/><path class="n" d="M140 506 L860 506"/>
+<path class="e" d="M140 506 L140 528"/><path class="e" d="M380 506 L380 528"/><path class="e" d="M620 506 L620 528"/><path class="e" d="M860 506 L860 528"/>
+<text x="512" y="430" class="l">every Gemini / fallback call</text><text x="512" y="445" class="l">goes through ai.py</text>
+</svg>

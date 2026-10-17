@@ -1032,62 +1032,69 @@ def edit_image(img: Image.Image, task: str) -> Tuple[Image.Image, str]:
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Multimodal Search & Indexing (Gemini free tier)
+# Captioning & embeddings for search (retrieval lives in search.py, storage in vectorstore.py)
 # ─────────────────────────────────────────────────────────────────────
 
-def caption_image(img: Image.Image) -> dict:
+class AIError(RuntimeError):
+    """Raised by the strict caption/embed helpers so callers can record the failure."""
+
+
+def _is_transient(err: Exception) -> bool:
+    s = str(err).lower()
+    return any(k in s for k in ("429", "resource_exhausted", "quota", "500", "502", "503", "504",
+                                "unavailable", "timeout", "timed out", "connection", "deadline"))
+
+
+def _with_retry(fn, attempts: int = 3, base_delay: float = 1.0):
+    """Exponential backoff for transient API failures (rate limits, 5xx, network blips)."""
+    for n in range(attempts):
+        try:
+            return fn()
+        except Exception as e:
+            if n == attempts - 1 or not _is_transient(e):
+                raise
+            time.sleep(base_delay * (2 ** n) + random.random() * 0.3)
+
+
+def caption_image(img: Image.Image, strict: bool = False) -> dict:
+    """Caption + tags for the search index. strict=True raises AIError instead of returning a placeholder."""
+    fallback = {"caption": "Uploaded image", "tags": ["image"]}
     if not has_key():
-        return {"caption": "Uploaded image", "tags": ["image"]}
+        if strict:
+            raise AIError("No Gemini API key configured")
+        return fallback
     try:
         small = img.convert("RGB").copy()
         small.thumbnail((1024, 1024))
-        r = _call_text_model(
+        r = _with_retry(lambda: _call_text_model(
             contents=[small, prompts.CAPTION_PROMPT],
             config=types.GenerateContentConfig(response_mime_type="application/json"),
-        )
-        text = _extract_text(r)
-        data = json.loads(text)
-        return {"caption": data.get("caption", ""), "tags": data.get("tags", [])}
-    except Exception:
-        return {"caption": "Uploaded image", "tags": ["image"]}
+        ))
+        data = json.loads(_extract_text(r))
+        tags = [str(t).strip().lower() for t in data.get("tags", []) if str(t).strip()]
+        return {"caption": str(data.get("caption", "")).strip(), "tags": tags[:15]}
+    except Exception as e:
+        if strict:
+            raise AIError(f"Captioning failed: {e}") from e
+        return fallback
 
 
-def embed(text: str, query: bool = False) -> list[float]:
+def embed(text: str, query: bool = False, strict: bool = False) -> list[float]:
+    """Gemini embedding. strict=True raises AIError; otherwise returns [] on failure."""
     if not has_key():
+        if strict:
+            raise AIError("No Gemini API key configured")
         return []
     try:
-        r = _client().models.embed_content(
+        r = _with_retry(lambda: _client().models.embed_content(
             model=EMBED_MODEL,
             contents=[text],
             config=types.EmbedContentConfig(
                 task_type="RETRIEVAL_QUERY" if query else "RETRIEVAL_DOCUMENT"
             ),
-        )
-        return r.embeddings[0].values
-    except Exception:
+        ))
+        return list(r.embeddings[0].values)
+    except Exception as e:
+        if strict:
+            raise AIError(f"Embedding failed: {e}") from e
         return []
-
-
-def search(query: str, images: list[dict], top_k: int = 12) -> list[dict]:
-    """Semantic search over caption embeddings with keyword fallback."""
-    q = query.lower().split()
-    scored = []
-    qv = np.array(embed(query, query=True)) if has_key() else None
-    for im in images:
-        text = f"{im.get('caption','')} {im.get('tags','')}".lower()
-        kw = sum(w in text for w in q) / max(len(q), 1)
-        sem = 0.0
-        if qv is not None and len(qv) > 0 and im.get("embedding"):
-            try:
-                v = np.array(json.loads(im["embedding"]))
-                norm_prod = np.linalg.norm(qv) * np.linalg.norm(v)
-                if norm_prod > 0:
-                    sem = float(qv @ v / norm_prod)
-            except Exception:
-                pass
-        scored.append((0.8 * sem + 0.2 * kw, im))
-    scored.sort(key=lambda x: x[0], reverse=True)
-    if not scored or scored[0][0] <= 0:
-        return []
-    best = scored[0][0]
-    return [im for s, im in scored[:top_k] if s >= best - 0.12 and s > 0]
