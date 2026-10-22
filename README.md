@@ -1,5 +1,7 @@
 # PixelPrompt AI: Multimodal AI-Powered Image Studio
 
+# Deployed Link: https://ai-powered-image-editing-platform-faxcagywcdfgecoddnmcv9.streamlit.app/
+
 Edit images with plain English, keep a non-destructive version history, and find any photo in your library by describing it ("sunset", "a login form", "the ones with a beach").
 
 Built with **Streamlit**, **Google Gemini** (vision, text, embeddings, image editing) and **PIL / OpenCV / rembg**. No custom models, no fine-tuning.
